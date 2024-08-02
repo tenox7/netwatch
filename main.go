@@ -35,9 +35,7 @@ import (
 type probe func(string, chan []float64) error
 
 var (
-	pingInterval       = 1 * time.Second
-	pingTimeout        = 4 * time.Second
-	size         uint  = 56
+	interval           = 1 * time.Second
 	title              = "netwatch"
 	windowWidth  int32 = 180
 	windowHeight int32 = 100
@@ -67,7 +65,7 @@ var (
 		"sine": func(target string, c chan []float64) error {
 			go func() {
 				i := 0.0
-				for range time.Tick(pingInterval) {
+				for range time.Tick(interval) {
 					c <- []float64{math.Sin(i) + 1}
 					i += 0.1
 				}
@@ -78,7 +76,7 @@ var (
 		"lagsine": func(target string, c chan []float64) error {
 			go func() {
 				i := 0.0
-				for range time.Tick(pingInterval * 5) {
+				for range time.Tick(interval * 5) {
 					c <- []float64{math.Sin(i) + 1}
 					i += 0.1
 				}
@@ -89,7 +87,7 @@ var (
 		"multi": func(target string, c chan []float64) error {
 			go func() {
 				i := 0.0
-				for range time.Tick(pingInterval) {
+				for range time.Tick(interval) {
 					c <- []float64{math.Sin(i) + 1, math.Cos(i) + 1, rand.Float64() * 2}
 					i += 0.1
 				}
@@ -336,7 +334,7 @@ func main() {
 	render := make(chan interface{})
 	go func() {
 		render <- nil // Initial render
-		for range time.Tick(pingInterval) {
+		for range time.Tick(interval) {
 			for _, panel := range panels {
 				select {
 				case v := <-panel.channel:
