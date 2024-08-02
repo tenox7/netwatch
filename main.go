@@ -120,7 +120,7 @@ func drawText(renderer *sdl.Renderer, font *ttf.Font, color sdl.Color, x int32, 
 	return w, h
 }
 
-func plotRing(r *ring.Ring, host string, tgtnum int32, renderer *sdl.Renderer, font *ttf.Font, fg sdl.Color) {
+func plotRing(r *ring.Ring, name string, tgtnum int32, renderer *sdl.Renderer, font *ttf.Font, fg sdl.Color) {
 	var minv, maxv, avg, lst, tot float64 = 10000.0, 0, 0, 0, 0
 	var i, h int32 = 0, 0
 	var txt string
@@ -129,7 +129,7 @@ func plotRing(r *ring.Ring, host string, tgtnum int32, renderer *sdl.Renderer, f
 
 	renderer.SetDrawColor(fg.R, fg.G, fg.B, fg.A)
 	renderer.DrawRect(&sdl.Rect{windowMargin, vs + windowMargin + 15, windowWidth - (windowMargin * 2), panelHeight})
-	drawText(renderer, font, fg, windowMargin, vs+windowMargin-3, host)
+	drawText(renderer, font, fg, windowMargin, vs+windowMargin-3, name)
 
 	r.Do(func(x interface{}) {
 		data, _ = x.([]float64)
@@ -347,7 +347,8 @@ func main() {
 					color = errColor
 				}
 
-				plotRing(panel.ring, panel.target, int32(i), renderer, font, color)
+				plotRing(panel.ring, fmt.Sprintf("%s:%s", panel.typ, panel.target),
+					int32(i), renderer, font, color)
 			}
 
 			renderer.Present()
