@@ -28,6 +28,7 @@ import (
 
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/veandco/go-sdl2/ttf"
+	"golang.org/x/exp/maps"
 )
 
 type probe func(string, chan float64) error
@@ -225,7 +226,8 @@ func main() {
 	var fgColor string
 
 	flag.Usage = func() {
-		errbox("Usage: \n%s host [host [...]]", os.Args[0])
+		errbox("Usage:\n%s type:target [type:target [...]]\n\nPanel types are:\n%s",
+			os.Args[0], strings.Join(maps.Keys(probes), ", "))
 	}
 
 	flag.BoolVar(&fullScreen, "fs", false, "Run in full screen mode")
