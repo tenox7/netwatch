@@ -30,7 +30,7 @@ import (
 	"github.com/veandco/go-sdl2/ttf"
 )
 
-type probe func(target string) (chan float64, error)
+type probe func(string, chan float64) error
 
 var (
 	pingInterval       = 1 * time.Second
@@ -56,10 +56,8 @@ var (
 	// even if channel writes are blocking and the channel is only read on the
 	// update interval.
 	probes = map[string]probe{
-		// Basic test probe
-		"sine": func(target string) (chan float64, error) {
+		"sine": func(target string, c chan float64) error {
 			// Ignore target
-			c := make(chan float64)
 			go func() {
 				i := 0.0
 				for range time.Tick(pingInterval) {
@@ -67,12 +65,10 @@ var (
 					i += 0.1
 				}
 			}()
-			return c, nil
+			return nil
 		},
-		// Timeout test probe
-		"lagsine": func(target string) (chan float64, error) {
+		"lagsine": func(target string, c chan float64) error {
 			// Ignore target
-			c := make(chan float64)
 			go func() {
 				i := 0.0
 				for range time.Tick(pingInterval * 5) {
@@ -80,7 +76,7 @@ var (
 					i += 0.1
 				}
 			}()
-			return c, nil
+			return nil
 		},
 	}
 )
@@ -203,7 +199,8 @@ func parsePanels(args []string) ([]*panel, error) {
 			return nil, fmt.Errorf("Unsupported panel type: %q", tokens[0])
 		}
 
-		c, err := p(tokens[1])
+		c := make(chan float64)
+		err := p(tokens[1], c)
 		if err != nil {
 			return nil, fmt.Errorf("Error initializing %s: %w", tokens[0], err)
 		}
