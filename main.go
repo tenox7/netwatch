@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"os/exec"
 	"strings"
@@ -31,7 +32,7 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-type probe func(string, chan float64) error
+type probe func(string, chan []float64) error
 
 var (
 	pingInterval       = 1 * time.Second
@@ -49,6 +50,11 @@ var (
 	fg                 = sdl.Color{0xFF, 0xFF, 0xFF, 0xFF}
 	bg                 = sdl.Color{0x64, 0x64, 0x64, 0xFF}
 	errColor           = sdl.Color{0xFF, 0x64, 0x64, 0xFF}
+	plotColors         = []sdl.Color{
+		{0x00, 0xFF, 0x00, 0xFF},
+		{0x00, 0x00, 0xFF, 0xFF},
+		{0xFF, 0x7F, 0x00, 0xFF},
+	}
 
 	//go:embed fonts/noto.ttf
 	fontData []byte
@@ -57,23 +63,34 @@ var (
 	// even if channel writes are blocking and the channel is only read on the
 	// update interval.
 	probes = map[string]probe{
-		"sine": func(target string, c chan float64) error {
-			// Ignore target
+		// Basic test probe
+		"sine": func(target string, c chan []float64) error {
 			go func() {
 				i := 0.0
 				for range time.Tick(pingInterval) {
-					c <- math.Sin(i) + 1
+					c <- []float64{math.Sin(i) + 1}
 					i += 0.1
 				}
 			}()
 			return nil
 		},
-		"lagsine": func(target string, c chan float64) error {
-			// Ignore target
+		// Timeout test probe
+		"lagsine": func(target string, c chan []float64) error {
 			go func() {
 				i := 0.0
 				for range time.Tick(pingInterval * 5) {
-					c <- math.Sin(i) + 1
+					c <- []float64{math.Sin(i) + 1}
+					i += 0.1
+				}
+			}()
+			return nil
+		},
+		// Multi-plot test probe
+		"multi": func(target string, c chan []float64) error {
+			go func() {
+				i := 0.0
+				for range time.Tick(pingInterval) {
+					c <- []float64{math.Sin(i) + 1, math.Cos(i) + 1, rand.Float64() * 2}
 					i += 0.1
 				}
 			}()
@@ -90,26 +107,6 @@ func errbox(format string, args ...interface{}) {
 	os.Exit(1)
 }
 
-func color(v float64, max float64) (uint8, uint8, uint8, uint8) {
-	var red, green int = 0, 0xFF
-
-	red = int(v / max * float64(0xFF))
-
-	if red > 0xFF {
-		green = 0xFF - (red - 0xFF)
-		red = 0xFF
-	} else if red < 0 {
-		red = 0
-	}
-
-	if green > 0xFF {
-		green = 0xFF
-	} else if green < 0x80 {
-		green = 0x80
-	}
-	return uint8(red), uint8(green), 0x00, 0xFF
-}
-
 func drawText(renderer *sdl.Renderer, font *ttf.Font, color sdl.Color, x int32, y int32, text string) (int32, int32) {
 	var surface *sdl.Surface
 	var texture *sdl.Texture
@@ -124,60 +121,74 @@ func drawText(renderer *sdl.Renderer, font *ttf.Font, color sdl.Color, x int32, 
 }
 
 func plotRing(r *ring.Ring, host string, tgtnum int32, renderer *sdl.Renderer, font *ttf.Font, fg sdl.Color) {
-	var min, max, avg, lst, tot float64 = 10000.0, 0, 0, 0, 0
+	var minv, maxv, avg, lst, tot float64 = 10000.0, 0, 0, 0, 0
 	var i, h int32 = 0, 0
 	var txt string
 	var vs int32 = (tgtnum * targetSize) + 1
-	var v float64
+	var data, prev []float64
 
 	renderer.SetDrawColor(fg.R, fg.G, fg.B, fg.A)
 	renderer.DrawRect(&sdl.Rect{windowMargin, vs + windowMargin + 15, windowWidth - (windowMargin * 2), panelHeight})
 	drawText(renderer, font, fg, windowMargin, vs+windowMargin-3, host)
 
 	r.Do(func(x interface{}) {
-		v, _ = x.(float64)
-		lst = v
-		if v > max {
-			max = v
-		}
-		if v < min {
-			min = v
-		}
-		if v > 0 {
-			tot += v
-			i++
+		data, _ = x.([]float64)
+		for _, v := range data {
+			lst = v
+			if v > maxv {
+				maxv = v
+			}
+			if v < minv {
+				minv = v
+			}
+			if v > 0 {
+				tot += v
+				i++
+			}
 		}
 	})
 
 	avg = tot / float64(i)
 	i = 0
 
+	vh := func(v float64) int32 {
+		return int32((v/maxv)*float64(panelHeight-2)) - 1
+	}
+
 	r.Do(func(x interface{}) {
-		v, _ = x.(float64)
-		if math.IsNaN(v) {
-			h = panelHeight - 1
-			renderer.SetDrawColor(0xFF, 0x00, 0x00, 0xFF)
-			renderer.DrawLine(windowMargin+i, vs+windowMargin+panelHeight+15-h,
-				windowMargin+i, vs+windowMargin+panelHeight+15-2)
-		} else if v > 0 {
-			h = int32((v/max)*float64(panelHeight-2)) - 1
-			renderer.DrawLine(windowMargin+1+i, vs+windowMargin+panelHeight+13-h,
-				windowMargin+1+i, vs+windowMargin+panelHeight+13)
-		} else {
-			h = 2
-			renderer.SetDrawColor(0x00, 0xFF, 0x00, 0xFF)
-			renderer.DrawLine(windowMargin+i, vs+windowMargin+panelHeight+15-h,
-				windowMargin+i, vs+windowMargin+panelHeight+15-2)
+		prev = data
+		data, _ = x.([]float64)
+		for j, v := range data {
+			if math.IsNaN(v) {
+				h = panelHeight - 1
+				renderer.SetDrawColor(errColor.R, errColor.G, errColor.B, errColor.A)
+			} else if v > 0 {
+				h = vh(v)
+				if len(plotColors) > j {
+					renderer.SetDrawColor(plotColors[j].R, plotColors[j].G, plotColors[j].B, plotColors[j].A)
+				}
+			} else {
+				h = 2
+				renderer.SetDrawColor(0x00, 0xFF, 0x00, 0xFF)
+			}
+			x, y1, y2 := windowMargin+i, vs+windowMargin+panelHeight+13, vs+windowMargin+panelHeight+13
+			if j > 0 && len(prev) > j {
+				y1 -= min(vh(v), vh(prev[j]))
+				y2 -= max(vh(v), vh(prev[j]))
+			} else {
+				y1 -= h
+			}
+			renderer.DrawLine(x, y1, x, y2)
 		}
 		i++
 	})
-	txt = fmt.Sprintf("L=%.1f M=%.1f A=%.1f", lst, max, avg)
+	txt = fmt.Sprintf("L=%.1f M=%.1f A=%.1f", lst, maxv, avg)
 	drawText(renderer, font, fg, windowMargin, vs+windowMargin+panelHeight+15, txt)
 }
 
 type panel struct {
 	typ, target string
-	channel     chan float64
+	channel     chan []float64
 	ring        *ring.Ring
 }
 
@@ -200,7 +211,7 @@ func parsePanels(args []string) ([]*panel, error) {
 			return nil, fmt.Errorf("Unsupported panel type: %q", tokens[0])
 		}
 
-		c := make(chan float64)
+		c := make(chan []float64)
 		err := p(tokens[1], c)
 		if err != nil {
 			return nil, fmt.Errorf("Error initializing %s: %w", tokens[0], err)
