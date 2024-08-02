@@ -26,7 +26,7 @@ import (
 	"os/exec"
 	"time"
 
-	ping "github.com/digineo/go-ping"
+	"github.com/digineo/go-ping"
 	"github.com/digineo/go-ping/monitor"
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/veandco/go-sdl2/ttf"
@@ -36,7 +36,7 @@ var (
 	pingInterval        = 1 * time.Second
 	pingTimeout         = 4 * time.Second
 	size          uint  = 56
-	title               = "GoPingPlot"
+	title               = "netwatch"
 	windowWidth   int32 = 180
 	windowHeight  int32 = 100
 	windowMargin  int32 = 5
@@ -268,7 +268,7 @@ func main() {
 
 	// Render Loop
 	go func() {
-		for {
+		for range time.Tick(pingInterval) {
 			//renderer.Clear()
 			renderer.SetDrawColor(bgr, bgb, bgb, 0xFF)
 			renderer.FillRect(&sdl.Rect{0, 0, windowWidth, windowHeight})
@@ -280,18 +280,14 @@ func main() {
 				plotRing(rings[t], t, n, badPing, renderer, font, sdl.Color{fgr, fgg, fgb, 0xFF})
 			}
 			renderer.Present()
-			time.Sleep(pingInterval)
 		}
 	}()
 
 	// Event Loop
-	for {
-		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
-			switch event.(type) {
-			case *sdl.QuitEvent:
-				os.Exit(0)
-			}
+	for event := sdl.WaitEvent(); event != nil; event = sdl.WaitEvent() {
+		switch event.(type) {
+		case *sdl.QuitEvent:
+			os.Exit(0)
 		}
-		sdl.Delay(20)
 	}
 }
