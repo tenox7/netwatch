@@ -223,6 +223,7 @@ func parsePanels(args []string) ([]*panel, error) {
 			target:  tokens[1],
 			channel: c,
 			ring:    ring.New(int(panelWidth - 2)),
+			color:   fg,
 		}
 	}
 
@@ -334,6 +335,7 @@ func main() {
 	// some platforms.
 	render := make(chan interface{})
 	go func() {
+		render <- nil // Initial render
 		for range time.Tick(pingInterval) {
 			for _, panel := range panels {
 				select {
