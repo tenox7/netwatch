@@ -190,6 +190,7 @@ type panel struct {
 	typ, target string
 	channel     chan []float64
 	ring        *ring.Ring
+	color       sdl.Color
 }
 
 func parsePanels(args []string) ([]*panel, error) {
@@ -329,37 +330,48 @@ func main() {
 		errbox("Failed to open font:\n %s\n", err)
 	}
 
-	// Render Loop
+	// Update loop. Rendering is delegated to the main thread, as required on
+	// some platforms.
+	render := make(chan interface{})
 	go func() {
 		for range time.Tick(pingInterval) {
-			renderer.SetDrawColor(bg.R, bg.G, bg.B, 0xFF)
-			renderer.Clear()
-
-			for i, panel := range panels {
-				var color sdl.Color
-
+			for _, panel := range panels {
 				select {
 				case v := <-panel.channel:
 					panel.ring.Value = v
 					panel.ring = panel.ring.Next()
-					color = fg
+					panel.color = fg
 				default:
-					color = errColor
+					panel.color = errColor
 				}
-
-				plotRing(panel.ring, fmt.Sprintf("%s:%s", panel.typ, panel.target),
-					int32(i), renderer, font, color)
 			}
-
-			renderer.Present()
+			render <- nil
 		}
 	}()
 
-	// Event Loop
-	for event := sdl.WaitEvent(); event != nil; event = sdl.WaitEvent() {
-		switch event.(type) {
-		case *sdl.QuitEvent:
-			os.Exit(0)
+	// Event loop
+	for {
+		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
+			switch event.(type) {
+			case *sdl.QuitEvent:
+				os.Exit(0)
+			}
 		}
+
+		select {
+		case <-render:
+			renderer.SetDrawColor(bg.R, bg.G, bg.B, 0xFF)
+			renderer.Clear()
+
+			for i, panel := range panels {
+				plotRing(panel.ring, fmt.Sprintf("%s:%s", panel.typ, panel.target),
+					int32(i), renderer, font, panel.color)
+			}
+
+			renderer.Present()
+		default:
+		}
+
+		sdl.Delay(50)
 	}
 }
