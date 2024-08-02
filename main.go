@@ -21,35 +21,54 @@ import (
 	"flag"
 	"fmt"
 	"math"
-	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
-	"github.com/digineo/go-ping"
-	"github.com/digineo/go-ping/monitor"
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/veandco/go-sdl2/ttf"
 )
 
+type probe func(target string) (chan float64, error)
+
 var (
-	pingInterval        = 1 * time.Second
-	pingTimeout         = 4 * time.Second
-	size          uint  = 56
-	title               = "netwatch"
-	windowWidth   int32 = 180
-	windowHeight  int32 = 100
-	windowMargin  int32 = 5
-	panelHeight   int32 = 45
-	targetSize    int32 = 90
-	panelWidth          = windowWidth - (windowMargin * 2)
-	fontName            = "noto.ttf"
-	fontSize      int32 = 11
-	fgr, fgg, fgb uint8 = 0xFF, 0xFF, 0xFF
-	bgr, bgg, bgb uint8 = 0x64, 0x64, 0x64
+	pingInterval       = 1 * time.Second
+	pingTimeout        = 4 * time.Second
+	size         uint  = 56
+	title              = "netwatch"
+	windowWidth  int32 = 180
+	windowHeight int32 = 100
+	windowMargin int32 = 5
+	panelHeight  int32 = 45
+	targetSize   int32 = 90
+	panelWidth         = windowWidth - (windowMargin * 2)
+	fontName           = "noto.ttf"
+	fontSize     int32 = 11
+	fg                 = sdl.Color{0xFF, 0xFF, 0xFF, 0xFF}
+	bg                 = sdl.Color{0x64, 0x64, 0x64, 0xFF}
+	errColor           = sdl.Color{0xFF, 0x00, 0x00, 0xFF}
 
 	//go:embed fonts/noto.ttf
 	fontData []byte
+
+	// for loops without a ticker use more CPU than for loops with a ticker,
+	// even if channel writes are blocking and the channel is only read on the
+	// update interval.
+	probes = map[string]probe{
+		"sine": func(target string) (chan float64, error) {
+			// Ignore target
+			c := make(chan float64)
+			go func() {
+				i := 0.0
+				for range time.Tick(pingInterval) {
+					c <- (math.Sin(i) + 1) / 2
+					i += 0.1
+				}
+			}()
+			return c, nil
+		},
+	}
 )
 
 func errbox(format string, args ...interface{}) {
@@ -93,7 +112,7 @@ func drawText(renderer *sdl.Renderer, font *ttf.Font, color sdl.Color, x int32, 
 	return w, h
 }
 
-func plotRing(r *ring.Ring, host string, tgtnum int32, badping float64, renderer *sdl.Renderer, font *ttf.Font, fg sdl.Color) {
+func plotRing(r *ring.Ring, host string, tgtnum int32, renderer *sdl.Renderer, font *ttf.Font, fg sdl.Color) {
 	var min, max, avg, lst, tot float64 = 10000.0, 0, 0, 0, 0
 	var i, h int32 = 0, 0
 	var txt string
@@ -131,7 +150,6 @@ func plotRing(r *ring.Ring, host string, tgtnum int32, badping float64, renderer
 				windowMargin+i, vs+windowMargin+panelHeight+15-2)
 		} else if v > 0 {
 			h = int32((v/max)*float64(panelHeight-2)) - 1
-			renderer.SetDrawColor(color(v, badping))
 			renderer.DrawLine(windowMargin+1+i, vs+windowMargin+panelHeight+13-h,
 				windowMargin+1+i, vs+windowMargin+panelHeight+13)
 		} else {
@@ -146,18 +164,59 @@ func plotRing(r *ring.Ring, host string, tgtnum int32, badping float64, renderer
 	drawText(renderer, font, fg, windowMargin, vs+windowMargin+panelHeight+15, txt)
 }
 
+type panel struct {
+	typ, target string
+	channel     chan float64
+	ring        *ring.Ring
+}
+
+func parsePanels(args []string) ([]*panel, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("No args specified")
+	} else if len(args) > int(^byte(0)) {
+		return nil, fmt.Errorf("Too many targets specified")
+	}
+
+	a := make([]*panel, len(args))
+	for i, arg := range args {
+		tokens := strings.Split(arg, ":")
+		if len(tokens) != 2 {
+			return nil, fmt.Errorf("Could not parse panel: %q", arg)
+		}
+
+		p, ok := probes[tokens[0]]
+		if !ok {
+			return nil, fmt.Errorf("Unsupported panel type: %q", tokens[0])
+		}
+
+		c, err := p(tokens[1])
+		if err != nil {
+			return nil, fmt.Errorf("Error initializing %s: %w", tokens[0], err)
+		}
+
+		a[i] = &panel{
+			typ:     tokens[0],
+			target:  tokens[1],
+			channel: c,
+			ring:    ring.New(int(panelWidth - 2)),
+		}
+	}
+
+	return a, nil
+}
+
 func main() {
+	// Parse CLI args
+
 	var foreground bool
 	var fullScreen bool
 	var bgColor string
 	var fgColor string
-	var badPing float64
 
 	flag.Usage = func() {
 		errbox("Usage: \n%s host [host [...]]", os.Args[0])
 	}
 
-	flag.Float64Var(&badPing, "t", 100, "Pings longer than this will be be more redish color")
 	flag.BoolVar(&fullScreen, "fs", false, "Run in full screen mode")
 	flag.StringVar(&bgColor, "bg", "", "Background Color in Hex RRGGBB")
 	flag.StringVar(&fgColor, "fg", "", "Border and Text Color in Hex RRGGBB")
@@ -180,28 +239,27 @@ func main() {
 		os.Exit(0)
 	}
 
-	targets := flag.Args()
-	if len(targets) < 1 {
-		errbox("No targets specified")
-	} else if len(targets) > int(^byte(0)) {
-		errbox("Too many targets specified")
+	panels, err := parsePanels(flag.Args())
+	if err != nil {
+		errbox(err.Error())
 	}
 
 	if len(bgColor) == 6 {
-		n, err := fmt.Sscanf(bgColor, "%2x%2x%2x", &bgr, &bgg, &bgb)
+		n, err := fmt.Sscanf(bgColor, "%2x%2x%2x", &bg.R, &bg.G, &bg.B)
 		if err != nil || n != 3 {
 			errbox("Unable to parse bg background color")
 		}
 	}
 
 	if len(fgColor) == 6 {
-		n, err := fmt.Sscanf(fgColor, "%2x%2x%2x", &fgr, &fgg, &fgb)
+		n, err := fmt.Sscanf(fgColor, "%2x%2x%2x", &fg.R, &fg.G, &fg.B)
 		if err != nil || n != 3 {
 			errbox("Unable to parse fg foreground color")
 		}
 	}
 
 	// SDL Init
+
 	if err := sdl.Init(sdl.INIT_VIDEO); err != nil {
 		errbox("Failed to initialize SDL:\n %s\n", err)
 	}
@@ -210,7 +268,7 @@ func main() {
 		errbox("Failed to initialize TTF:\n %s\n", err)
 	}
 
-	window, err := sdl.CreateWindow(title, sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED, windowWidth, int32(len(targets))*targetSize, sdl.WINDOW_OPENGL)
+	window, err := sdl.CreateWindow(title, sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED, windowWidth, int32(len(panels))*targetSize, sdl.WINDOW_OPENGL)
 	if err != nil {
 		errbox("Failed to create window:\n %s\n", err)
 	}
@@ -229,6 +287,8 @@ func main() {
 	}
 	defer renderer.Destroy()
 
+	// Font init
+
 	tmp, err := os.CreateTemp(os.TempDir(), fontName)
 	if err != nil {
 		errbox("Unable to create temp file:\n%s\n", err)
@@ -245,40 +305,27 @@ func main() {
 		errbox("Failed to open font:\n %s\n", err)
 	}
 
-	// Ping Init
-	pinger, err := ping.New("0.0.0.0", "::")
-	if err != nil {
-		errbox("Unable to bind:\n%s\nAre you running as root?\n", err)
-	}
-	pinger.SetPayloadSize(uint16(size))
-	defer pinger.Close()
-
-	monitor := monitor.New(pinger, pingInterval, pingTimeout)
-	defer monitor.Stop()
-
-	rings := make(map[string]*ring.Ring)
-	for i, target := range targets {
-		ipAddr, err := net.ResolveIPAddr("", target)
-		if err != nil {
-			errbox("invalid target '%s':\n %s", target, err)
-		}
-		monitor.AddTargetDelayed(string([]byte{byte(i)}), *ipAddr, 10*time.Millisecond*time.Duration(i))
-		rings[target] = ring.New(int(panelWidth - 2))
-	}
-
 	// Render Loop
 	go func() {
 		for range time.Tick(pingInterval) {
-			//renderer.Clear()
-			renderer.SetDrawColor(bgr, bgb, bgb, 0xFF)
-			renderer.FillRect(&sdl.Rect{0, 0, windowWidth, windowHeight})
-			for i, metrics := range monitor.ExportAndClear() {
-				n := int32([]byte(i)[0])
-				t := targets[n]
-				rings[t].Value = float64(metrics.Median)
-				rings[t] = rings[t].Next()
-				plotRing(rings[t], t, n, badPing, renderer, font, sdl.Color{fgr, fgg, fgb, 0xFF})
+			renderer.SetDrawColor(bg.R, bg.G, bg.B, 0xFF)
+			renderer.Clear()
+
+			for i, panel := range panels {
+				var color sdl.Color
+
+				select {
+				case v := <-panel.channel:
+					panel.ring.Value = v
+					panel.ring = panel.ring.Next()
+					color = fg
+				default:
+					color = errColor
+				}
+
+				plotRing(panel.ring, panel.target, int32(i), renderer, font, color)
 			}
+
 			renderer.Present()
 		}
 	}()
