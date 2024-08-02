@@ -47,7 +47,7 @@ var (
 	fontSize     int32 = 11
 	fg                 = sdl.Color{0xFF, 0xFF, 0xFF, 0xFF}
 	bg                 = sdl.Color{0x64, 0x64, 0x64, 0xFF}
-	errColor           = sdl.Color{0xFF, 0x00, 0x00, 0xFF}
+	errColor           = sdl.Color{0xFF, 0x64, 0x64, 0xFF}
 
 	//go:embed fonts/noto.ttf
 	fontData []byte
@@ -56,13 +56,27 @@ var (
 	// even if channel writes are blocking and the channel is only read on the
 	// update interval.
 	probes = map[string]probe{
+		// Basic test probe
 		"sine": func(target string) (chan float64, error) {
 			// Ignore target
 			c := make(chan float64)
 			go func() {
 				i := 0.0
 				for range time.Tick(pingInterval) {
-					c <- (math.Sin(i) + 1) / 2
+					c <- math.Sin(i) + 1
+					i += 0.1
+				}
+			}()
+			return c, nil
+		},
+		// Timeout test probe
+		"lagsine": func(target string) (chan float64, error) {
+			// Ignore target
+			c := make(chan float64)
+			go func() {
+				i := 0.0
+				for range time.Tick(pingInterval * 5) {
+					c <- math.Sin(i) + 1
 					i += 0.1
 				}
 			}()
