@@ -193,6 +193,7 @@ func main() {
 	var fullScreen bool
 	var bgColor string
 	var fgColor string
+	var intervalSeconds int
 
 	flag.Usage = func() {
 		errbox("Usage:\n%s type:target [type:target [...]]\n\nPanel types are:\n%s",
@@ -203,7 +204,10 @@ func main() {
 	flag.StringVar(&bgColor, "bg", "", "Background Color in Hex RRGGBB")
 	flag.StringVar(&fgColor, "fg", "", "Border and Text Color in Hex RRGGBB")
 	flag.BoolVar(&foreground, "f", false, "Run in foreground, do not detach from terminal")
+	flag.IntVar(&intervalSeconds, "t", 5, "Time between updates in seconds")
 	flag.Parse()
+
+	interval = time.Duration(intervalSeconds) * time.Second
 
 	if !foreground {
 		cwd, err := os.Getwd()
