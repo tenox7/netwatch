@@ -186,6 +186,19 @@ func parsePanels(args []string) ([]*panel, error) {
 	return a, nil
 }
 
+func update(panels []*panel) {
+	for _, panel := range panels {
+		select {
+		case v := <-panel.channel:
+			panel.ring.Value = v
+			panel.ring = panel.ring.Next()
+			panel.color = fg
+		default:
+			panel.color = errColor
+		}
+	}
+}
+
 func main() {
 	// Parse CLI args
 
@@ -295,18 +308,11 @@ func main() {
 	// some platforms.
 	render := make(chan interface{})
 	go func() {
-		render <- nil // Initial render
+		update(panels)
+		render <- nil
+
 		for range time.Tick(interval) {
-			for _, panel := range panels {
-				select {
-				case v := <-panel.channel:
-					panel.ring.Value = v
-					panel.ring = panel.ring.Next()
-					panel.color = fg
-				default:
-					panel.color = errColor
-				}
-			}
+			update(panels)
 			render <- nil
 		}
 	}()
